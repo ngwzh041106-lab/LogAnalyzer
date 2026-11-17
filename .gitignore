@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.py[cod]
+.env
+data/*.db
+data/*.sqlite
+logs/*
+!logs/.gitkeep
+.pytest_cache/
+.ruff_cache/
+node_modules/
+dist/

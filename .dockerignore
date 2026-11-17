@@ -1,0 +1,14 @@
+.git
+.gitignore
+.env
+.venv
+__pycache__
+*.py[cod]
+.pytest_cache
+.ruff_cache
+data
+logs/*
+!logs/.gitkeep
+node_modules
+dist
+README.md

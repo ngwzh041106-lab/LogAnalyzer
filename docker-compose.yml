@@ -1,0 +1,20 @@
+services:
+  log-analyzer:
+    build: .
+    ports:
+      - "8080:8080"
+    volumes:
+      # SQLite must live on a native Linux filesystem; /mnt/d uses 9p and
+      # can intermittently return disk I/O errors under concurrent access.
+      - log-analyzer-data:/app/data
+      # command source 可透過此 socket 執行 docker logs。
+      - /var/run/docker.sock:/var/run/docker.sock
+      # file source 使用主機相同路徑，UI 可直接填 /var/log/*.log。
+      - /var/log:/var/log:ro
+      # 其他 file source 會以主機絕對路徑解析到此唯讀掛載。
+      # 例如主機 /home/user/app.log 會由容器讀取 /host/home/user/app.log。
+      - /:/host:ro
+    restart: unless-stopped
+
+volumes:
+  log-analyzer-data:

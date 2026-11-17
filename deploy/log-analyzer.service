@@ -1,0 +1,13 @@
+[Unit]
+Description=Log Analyzer
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/log-analyzer
+Environment=PYTHONPATH=/opt/log-analyzer/backend
+ExecStart=/opt/log-analyzer/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8080
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
