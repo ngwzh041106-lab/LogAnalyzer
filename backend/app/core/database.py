@@ -21,9 +21,9 @@ def get_db() -> Generator[Session, None, None]:
 
 
 def init_db() -> None:
-    from app.models import log_source, settings as settings_model, summary, user
+    from app.models import log_source, settings as settings_model, summary
 
-    del log_source, settings_model, summary, user
+    del log_source, settings_model, summary
     if settings.database_url.startswith("sqlite:///"):
         database_path = settings.database_url.removeprefix("sqlite:///")
         if database_path != ":memory:":
