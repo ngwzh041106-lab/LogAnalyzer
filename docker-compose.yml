@@ -1,12 +1,16 @@
 services:
   log-analyzer:
     build: .
+    environment:
+      # Keep the existing SQLite volume; do not move it onto a Windows bind mount.
+      LOG_ANALYZER_DATABASE_URL: sqlite:////app/data/log-analyzer.db
     ports:
       - "8080:8080"
     volumes:
       # SQLite must live on a native Linux filesystem; /mnt/d uses 9p and
       # can intermittently return disk I/O errors under concurrent access.
       - log-analyzer-data:/app/data
+      - ./private/logs:/logs:ro
       # command source 可透過此 socket 執行 docker logs。
       - /var/run/docker.sock:/var/run/docker.sock
       # file source 使用主機相同路徑，UI 可直接填 /var/log/*.log。

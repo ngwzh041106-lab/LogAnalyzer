@@ -34,7 +34,7 @@ Browser
 FastAPI (0.0.0.0:8080)
    ├── REST API (/api)
    ├── Static Web UI
-   ├── SQLite (data/log-analyzer.db)
+   ├── SQLite（本機 private/data/log-analyzer.db；Docker 使用獨立 volume）
    ├── LogReader ── file source / command source
    ├── AnalysisScheduler
    └── LLMClient ── Ollama /api/chat
@@ -169,7 +169,7 @@ pip install -r backend/requirements.txt
 python -m uvicorn app.main:app --app-dir backend --host 0.0.0.0 --port 8080
 ```
 
-開啟 <http://localhost:8080>。SQLite 預設位置為 `data/log-analyzer.db`；`data/` 不存在時會由應用程式建立資料表，但請先確保資料夾可寫入。
+開啟 <http://localhost:8080>。本機 SQLite 預設位置為 `private/data/log-analyzer.db`；`data/` 不存在時會由應用程式建立資料表，但請先確保資料夾可寫入。
 
 也可以使用環境變數覆寫設定：
 
@@ -275,7 +275,7 @@ sudo systemctl status log-analyzer
 
 本機部署時，請確認：
 
-- `/opt/log-analyzer/data` 可由服務帳號寫入
+- `/opt/log-analyzer/private/data` 可由服務帳號寫入
 - 服務帳號能讀取要分析的 Log
 - 若使用 command source，服務帳號能執行所需指令
 - `WorkingDirectory`、`PYTHONPATH` 與 `.venv` 路徑符合實際安裝位置
@@ -327,3 +327,11 @@ docker compose logs --tail=100 log-analyzer
 ### 排程沒有立即執行
 
 來源建立後，排程器會先等待設定的 `schedule_minutes`；背景迴圈每 30 秒檢查一次。需要立即驗證時，請使用來源卡片上的「開始分析」。
+
+## 公開程式與私人資料分離
+
+GitHub 只放程式、部署設定與不含真實密碼的 .env.example。私人資料統一放 private/；此目錄不進 Git，也不進 Docker build context。詳細規則見 [PRIVATE_DATA.md](PRIVATE_DATA.md)。
+
+本機執行：將 .env.example 複製到 private/.env，再填自己的設定；SQLite 預設在 private/data/log-analyzer.db。舊版若有 data/log-analyzer.db，請先停止服務，將資料庫及同名 -wal/-shm 檔一起備份及移到 private/data/，或設定 LOG_ANALYZER_DATABASE_URL 繼續使用舊檔，避免誤建空資料庫。舊根目錄 .env 仍相容，但建議移至 private/.env。
+
+Docker：資料庫繼續使用原有 log-analyzer-data volume（容器 /app/data），不需搬移，也不會加入 Git。private/.env 僅供本機使用，Docker 不會自動載入此檔。Log 檔放 private/logs/，UI 填 /logs/檔名，例如 /logs/Linux_2k.log；修改掛載後執行 docker compose up -d --build。不要執行 docker compose down -v，以免刪除資料。

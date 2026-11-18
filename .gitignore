@@ -10,3 +10,24 @@ logs/*
 .ruff_cache/
 node_modules/
 dist/
+
+# Private runtime files must never be committed.
+private/
+data/
+backups/
+secrets/
+.env.*
+!.env.example
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+*.log
+*.pem
+*.key
+*.p12
+*.pfx
+*.bak
+*.dump
