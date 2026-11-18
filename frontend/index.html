@@ -5,9 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Log Analyzer</title>
     <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/assets/styles.css?v=3" />
+    <link rel="stylesheet" href="/assets/styles.css?v=4" />
   </head>
-  <body>
+  <body class="signed-out">
+    <section id="login-screen"></section>
     <aside class="sidebar">
       <div class="brand"><div class="brand-mark">L</div><div><strong>Log Analyzer</strong><small>內網監控中心</small></div></div>
       <div class="nav-label">WORKSPACE</div>
@@ -19,14 +20,15 @@
       <div class="nav-label settings-label">SETTINGS</div>
       <nav>
         <button class="nav-item" data-view="llm"><span>◎</span>LLM 設定</button>
-        <button class="nav-item" data-view="webhook"><span>↗</span>Webhook</button>
+        <button class="nav-item" data-view="webhook"><span>↗</span>Gmail 通知</button>
       </nav>
+      <button class="nav-item" data-view="account"><span>◎</span>帳號管理</button><div id="account-label"></div><button id="logout" class="secondary">登出</button>
       <div class="sidebar-footer"><span class="pulse"></span><span>服務運行中</span><code>v0.1.0</code></div>
     </aside>
     <main class="app">
       <header class="topbar"><div><span class="eyebrow">LOG OBSERVABILITY</span><h1 id="view-title">總覽</h1></div><div class="topbar-status"><span id="health-dot" class="pulse"></span><span id="health">檢查中...</span></div></header>
       <section id="content"></section>
     </main>
-    <script src="/assets/app.js?v=3"></script>
+    <script src="/assets/app.js?v=4"></script>
   </body>
 </html>
