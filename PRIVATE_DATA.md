@@ -6,8 +6,8 @@
 
 | 位置 | 用途 |
 |---|---|
-| private/.env | 本機環境設定 |
-| private/data/ | 本機 SQLite（可能含 API Key、帳號雜湊、JWT 簽署金鑰、通知密碼及分析內容） |
+| private/.env | 環境設定、API Key、Gmail 地址與應用程式密碼、JWT 簽署金鑰 |
+| private/data/ | 本機 SQLite（帳號雜湊與分析內容；舊資料庫及備份仍可能含金鑰） |
 | private/logs/ | 原始 Log、測試資料；Docker 映射為 /logs |
 | private/backups/ | 資料庫備份、分析匯出、壓縮備份 |
 | private/secrets/ | 金鑰與其他私人設定 |

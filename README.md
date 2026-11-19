@@ -2,7 +2,7 @@
 
 單機、內網使用的 Log 分析工具。服務部署在需要被觀察的主機上，使用 FastAPI 同時提供 REST API 與 Web UI，從檔案或 Shell 指令取得 Log，再交給 Ollama 模型產生結構化摘要。
 
-> 目前版本適合內網或受信任的管理環境。服務沒有登入驗證；任何可以連線到服務的人都能查看 Log、修改設定並執行已設定的指令。
+> 目前版本適合內網或受信任的管理環境。服務已加入 JWT 登入；管理員可修改設定與執行指令，一般使用者僅能查看來源及已保存結果。
 
 ## 功能總覽
 
@@ -21,8 +21,8 @@
 
 ### 尚未完成的功能
 
-- Webhook 發送尚未實作；UI 中的 Webhook 頁面目前是預留畫面。
-- 沒有使用者登入、權限控管或 HTTPS 設定。
+- 已提供 Gmail 郵件通知；通用 HTTP Webhook 發送尚未實作。
+- 已提供 JWT 登入與管理員／唯讀角色；HTTPS 仍需部署時設定。
 - 排程服務重啟後不會補跑離線期間錯過的任務。
 
 ## 系統架構
@@ -34,7 +34,7 @@ Browser
 FastAPI (0.0.0.0:8080)
    ├── REST API (/api)
    ├── Static Web UI
-   ├── SQLite（本機 private/data/log-analyzer.db；Docker 使用獨立 volume）
+   ├── SQLite（Docker volume／本機 private/data）
    ├── LogReader ── file source / command source
    ├── AnalysisScheduler
    └── LLMClient ── Ollama /api/chat
@@ -169,7 +169,7 @@ pip install -r backend/requirements.txt
 python -m uvicorn app.main:app --app-dir backend --host 0.0.0.0 --port 8080
 ```
 
-開啟 <http://localhost:8080>。本機 SQLite 預設位置為 `private/data/log-analyzer.db`；`data/` 不存在時會由應用程式建立資料表，但請先確保資料夾可寫入。
+開啟 <http://localhost:8080>。本機 SQLite 預設位置為 `private/data/log-analyzer.db`；`private/data/` 不存在時會由應用程式建立資料表，但請先確保資料夾可寫入。
 
 也可以使用環境變數覆寫設定：
 
@@ -181,7 +181,7 @@ LOG_ANALYZER_DATABASE_URL=sqlite:///D:/path/to/log-analyzer.db
 LOG_ANALYZER_FRONTEND_DIR=D:/path/to/LogAnalyzer/frontend
 ```
 
-設定模型使用 `LOG_ANALYZER_` 前綴；目前 LLM 連線設定是保存於 SQLite 的應用程式設定，不是環境變數。
+設定模型使用 `LOG_ANALYZER_` 前綴；LLM 一般設定保存於 SQLite；API Key 由網頁儲存到私人檔案 private/.env。
 
 ## REST API
 
@@ -275,7 +275,7 @@ sudo systemctl status log-analyzer
 
 本機部署時，請確認：
 
-- `/opt/log-analyzer/private/data` 可由服務帳號寫入
+- `/opt/log-analyzer/data` 可由服務帳號寫入
 - 服務帳號能讀取要分析的 Log
 - 若使用 command source，服務帳號能執行所需指令
 - `WorkingDirectory`、`PYTHONPATH` 與 `.venv` 路徑符合實際安裝位置
@@ -328,10 +328,75 @@ docker compose logs --tail=100 log-analyzer
 
 來源建立後，排程器會先等待設定的 `schedule_minutes`；背景迴圈每 30 秒檢查一次。需要立即驗證時，請使用來源卡片上的「開始分析」。
 
-## 公開程式與私人資料分離
+## 外部模型 API
 
-GitHub 只放程式、部署設定與不含真實密碼的 .env.example。私人資料統一放 private/；此目錄不進 Git，也不進 Docker build context。詳細規則見 [PRIVATE_DATA.md](PRIVATE_DATA.md)。
+在「LLM 設定」將模型服務選為「OpenAI 相容 API」，填入供應商的 Base URL（包含版本路徑，例如 https://api.openai.com/v1，不要加入 /chat/completions）、模型 ID 與 API Key。先儲存設定，再按「測試連線」。手動分析、摘要全部與背景排程均使用這份設定；外部模式會將 Log 傳送到指定服務。
 
-本機執行：將 .env.example 複製到 private/.env，再填自己的設定；SQLite 預設在 private/data/log-analyzer.db。舊版若有 data/log-analyzer.db，請先停止服務，將資料庫及同名 -wal/-shm 檔一起備份及移到 private/data/，或設定 LOG_ANALYZER_DATABASE_URL 繼續使用舊檔，避免誤建空資料庫。舊根目錄 .env 仍相容，但建議移至 private/.env。
+設定 API 新增 provider：ollama（預設）或 openai（OpenAI 相容 Chat Completions）。舊設定不需遷移。外部模式呼叫 Base URL 加上 /chat/completions，解析 choices[0].message.content，以提示詞要求 JSON。Temperature 僅適用 Ollama。非 Chat Completions 格式尚不支援。API Key 留空保留原值；透過設定 API 傳入空字串可清除。
 
-Docker：資料庫繼續使用原有 log-analyzer-data volume（容器 /app/data），不需搬移，也不會加入 Git。private/.env 僅供本機使用，Docker 不會自動載入此檔。Log 檔放 private/logs/，UI 填 /logs/檔名，例如 /logs/Linux_2k.log；修改掛載後執行 docker compose up -d --build。不要執行 docker compose down -v，以免刪除資料。
+## Gmail 通知（簡單版）
+
+原理：分析成功 → 檢查嚴重程度 → 透過 Gmail SMTP 寄信。不需要 Webhook URL 或另一台接收伺服器；這是郵件通知，不是 HTTP Webhook。
+
+1. 在 Google 帳號啟用兩步驟驗證，再到 https://myaccount.google.com/apppasswords 建立應用程式密碼。部分組織帳號可能不提供此功能，請參考 https://support.google.com/mail/answer/185833 。
+2. 開啟「Gmail 通知」，填寄件 Gmail、收件信箱（可填自己）、應用程式密碼，先儲存設定。
+3. 按「寄送測試信」，確認收件匣或垃圾郵件有收到。
+4. 選擇通知程度、勾選啟用，再儲存。預設關閉，預設門檻為 warning。
+
+使用 smtp.gmail.com:587 與 STARTTLS，不需要新增套件。手動、摘要全部與排程分析成功後，每次符合條件寄一封；不通知分析失敗，也沒有去重、自動重試或寄信佇列。寄信最多等待每次網路操作 20 秒，因此分析回應可能稍慢。寄信失敗記錄於服務日誌，不影響分析結果。信件包含分析結果，不包含原始 Log。
+
+通知開關及嚴重程度儲存在 SQLite；寄件地址、收件地址及應用程式密碼儲存在 private/.env，讀取 API 不回傳密碼。密碼欄留空保留；設定 API 傳入空字串可清除。通知設定僅管理員可操作，適用受信任內網。
+
+API：GET /api/settings/email、PUT /api/settings/email、POST /api/settings/email/test（使用已儲存設定，即使未啟用也會寄測試信）。
+
+### 模型讀取逾時
+
+若出現 read operation timed out，表示網路讀取超過等待時間，不代表 API Key 錯誤。LLM 設定的 timeout_seconds 預設 180 秒，可設為 10～1800 秒；較慢模型可嘗試 600 秒。這是個別 socket 操作的逾時，不是整次分析的總時限。先用 50～100 行測試；若小量 Log 仍逾時，檢查服務負載、模型載入與網路。逾時不會自動重送請求。
+
+## 登入與基礎權限（JWT）
+
+原理：帳號密碼驗證成功 → 取得 1 小時有效的 JWT → 前端每次呼叫 API 帶上 Bearer Token → 後端驗證簽章、到期時間及資料庫中的角色。使用 PyJWT 與 pwdlib/Argon2；不自行實作加密。
+
+### 第一次建立管理員
+
+更新服務後，在專案目錄執行：
+
+```powershell
+ docker compose up -d --build
+ docker compose exec log-analyzer python -m app.manage_users
+```
+
+依提示輸入帳號及至少 12 字元的密碼；輸入密碼時不顯示字元是正常的。沒有預設帳密，也沒有公開註冊。若本機執行，先設定 PYTHONPATH=backend，再執行 python -m app.manage_users。此指令也能重設既有帳號為管理員，需輸入 YES 確認。請在備份資料庫後更新部署。
+
+登入後在「帳號管理」新增帳號、停用帳號或切換角色。所有使用者都能修改自己的密碼；管理員不能降級或停用自己。
+
+| 操作 | 一般使用者 viewer | 管理員 admin |
+|---|---|---|
+| 查看來源、已保存摘要（含原始請求／回應） | 可以 | 可以 |
+| 預覽 Log、手動分析、來源增刪改、刪除結果 | 不可以 | 可以 |
+| LLM、Gmail 設定與測試 | 不可以 | 可以 |
+| 建立帳號、變更角色與停用 | 不可以 | 可以 |
+
+預覽可能執行 Shell 指令，所以也限定管理員。所有業務 API（含健康檢查）都需登入；靜態登入頁公開，背景排程在服務內運作。權限在後端檢查，前端隱藏按鈕僅為操作引導。
+
+JWT 簽署金鑰首次啟動隨機產生並保存於 private/.env，不會透過設定 API 回傳。帳號密碼只存 Argon2 雜湊。Token 存於瀏覽器 sessionStorage；登出／改密碼會撤銷該帳號全部 Token，停用及角色變更亦會撤銷。private/.env 與資料庫都屬私人資料，請保護備份。跨網路使用請部署 HTTPS；此簡易版本沒有 MFA、忘記密碼郵件或多租戶資料隔離。
+
+API：POST /api/auth/login、GET /api/auth/me、POST /api/auth/logout、PUT /api/auth/password、GET/POST /api/auth/users、PUT /api/auth/users/{id}。登入傳 JSON username/password，其餘攜帶 Authorization: Bearer <token>。
+
+測試：安裝 requirements.txt 與 httpx，設定 PYTHONPATH=backend，執行 python -m unittest discover -s backend/tests -v。登入測試使用獨立暫存 SQLite。
+
+## 私人 .env 儲存
+
+功能恢復至外部模型 API、Gmail 通知與 JWT 登入版本，並保留 private/ 分離規則。使用者仍在網頁輸入資料，按儲存後立即生效，不需要自己編輯 .env 或重啟。
+
+- private/.env：LLM_API_KEY、GMAIL_SENDER、GMAIL_RECIPIENT、GMAIL_APP_PASSWORD、JWT_SECRET。
+- SQLite：一般設定、使用者帳號與密碼雜湊、來源及分析結果。登入密碼不會以明文放進 .env。
+- private/logs/：Log；容器內填 /logs/檔名。
+
+Docker 將 private/ 掛載到 /app/private，資料庫繼續使用既有 log-analyzer-data volume。請勿刪除 volume。升級前備份資料庫與 private/；執行 docker compose up -d --build。啟動時會先將舊資料庫的私密設定寫入 .env，再移除資料庫設定欄位，既有 .env 值優先，不覆蓋。JWT 舊金鑰會一起搬移，保留登入相容性；若寫檔失敗則停止啟動，不會先刪除舊設定。
+
+.env 是明文，不是加密，已由 .gitignore 與 .dockerignore 排除。不要上傳整個 private/ 或把其中內容貼出來。舊資料庫備份及可能殘留的 SQLite 頁面不會因欄位搬移而安全抹除，仍須當作秘密資料保管；曾外洩的金鑰需撤銷。
+
+Gmail 請使用啟用兩步驟驗證後建立的應用程式密碼，不是一次性驗證碼。儲存後可按「寄送測試信」。本機與 Docker 都直接讀寫私人檔案，不依賴 Docker env_file 的啟動快照；目前只支援單一 Uvicorn worker。
+
+本機資料庫預設改為 private/data/log-analyzer.db；若仍有舊 data/log-analyzer.db，停止服務後搬移資料庫及同名附屬檔，或使用 LOG_ANALYZER_DATABASE_URL 指定舊檔。詳見 PRIVATE_DATA.md。

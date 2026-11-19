@@ -19,6 +19,8 @@ class LLMClient:
         analysis_prompt: str,
         connection_test_prompt: str,
         api_key: str = "",
+        provider: str = "ollama",
+        timeout_seconds: int = 180,
     ):
         self.base_url = base_url.rstrip("/")
         self.model = model
@@ -26,6 +28,8 @@ class LLMClient:
         self.system_prompt = system_prompt
         self.analysis_prompt = analysis_prompt
         self.connection_test_prompt = connection_test_prompt
+        self.timeout_seconds = timeout_seconds
+        self.provider = provider
         self.api_key = api_key
         self.last_raw_input = ""
         self.last_raw_output = ""
@@ -53,7 +57,15 @@ class LLMClient:
         last_error = "LLM response was not valid JSON"
         for attempt in attempts:
             payload = self._post(attempt)
-            message = payload.get("message") or {}
+            if self.provider == "openai":
+                choices = payload.get("choices")
+                if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+                    raise LLMError("LLM response did not contain choices")
+                message = choices[0].get("message") or {}
+            else:
+                message = payload.get("message") or {}
+            if not isinstance(message, dict):
+                raise LLMError("LLM response message was not an object")
             content = message.get("content") or payload.get("response") or ""
             candidates = [content]
             thinking = message.get("thinking") or ""
@@ -79,10 +91,14 @@ class LLMClient:
                 {"role": "user", "content": prompt},
             ],
         }
+        endpoint = f"{self.base_url}/api/chat"
+        if self.provider == "openai":
+            request_payload = {"model": self.model, "messages": request_payload["messages"], "stream": False}
+            endpoint = f"{self.base_url}/chat/completions"
         serialized = json.dumps(request_payload, ensure_ascii=False, indent=2)
         self.last_raw_input = serialized
         request = Request(
-            f"{self.base_url}/api/chat",
+            endpoint,
             data=serialized.encode(),
             headers={
                 "Content-Type": "application/json",
@@ -91,19 +107,34 @@ class LLMClient:
             method="POST",
         )
         try:
-            with urlopen(request, timeout=180) as response:
+            with urlopen(request, timeout=self.timeout_seconds) as response:
                 raw_output = response.read().decode("utf-8")
                 self.last_raw_output = raw_output
                 payload = json.loads(raw_output)
-        except (HTTPError, URLError, TimeoutError, OSError) as exc:
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise LLMError("LLM response was not valid JSON") from exc
+        except TimeoutError as exc:
+            raise LLMError(self._timeout_message()) from exc
+        except URLError as exc:
+            if isinstance(exc.reason, TimeoutError):
+                raise LLMError(self._timeout_message()) from exc
+            raise LLMError(f"LLM request failed: {exc}") from exc
+        except (HTTPError, OSError) as exc:
             raise LLMError(f"LLM request failed: {exc}") from exc
         if not isinstance(payload, dict):
             raise LLMError("LLM response envelope was not a JSON object")
         return payload
 
+    def _timeout_message(self) -> str:
+        return (
+            f"模型連線或讀取逾時（等待設定：{self.timeout_seconds} 秒）。"
+            "請先將 Log 減少為 50～100 行，或在 LLM 設定提高等待秒數後重試。"
+            "若仍失敗，請檢查模型服務負載與網路連線。"
+        )
+
     @staticmethod
     def _parse_json(content: str) -> dict | None:
-        if not content:
+        if not isinstance(content, str) or not content:
             return None
         cleaned = content.strip().replace("```json", "").replace("```", "").strip()
         try:

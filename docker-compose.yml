@@ -10,6 +10,8 @@ services:
       # SQLite must live on a native Linux filesystem; /mnt/d uses 9p and
       # can intermittently return disk I/O errors under concurrent access.
       - log-analyzer-data:/app/data
+      # Directory mount allows atomic updates to private/.env from the settings UI.
+      - ./private:/app/private
       - ./private/logs:/logs:ro
       # command source 可透過此 socket 執行 docker logs。
       - /var/run/docker.sock:/var/run/docker.sock

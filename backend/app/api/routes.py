@@ -5,6 +5,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.core.auth import protect_api
+from app.core.private_settings import read_private, write_private
 from app.models.log_source import LogSource
 from app.models.settings import AppSettings
 from app.models.summary import Summary
@@ -13,8 +15,9 @@ from app.schemas.summary import LLMSettingsRead, LLMSettingsUpdate, SummaryRead
 from app.services.llm_client import LLMClient, LLMError
 from app.services.log_reader import LogReadError, LogReader
 from app.services.scheduler import AnalysisScheduler
+from app.services.email_notifications import EmailSettings, load_settings, public_settings, validate_ready, send_email, notify_summary
 
-router = APIRouter(prefix="/api")
+router = APIRouter(prefix="/api", dependencies=[Depends(protect_api)])
 _scheduler: AnalysisScheduler | None = None
 
 
@@ -25,9 +28,11 @@ def set_scheduler(scheduler: AnalysisScheduler) -> None:
 
 def _llm_config(db: Session) -> dict:
     defaults = {
+        "provider": "ollama",
         "base_url": "http://host.docker.internal:11434",
         "model": "gemma4:e4b",
         "temperature": 0.2,
+        "timeout_seconds": 180,
         "max_input_bytes": 32768,
         "system_prompt": "你是 Linux Log 分析助手。只做必要分析，使用繁體中文。不要展示推理，只輸出符合要求的 JSON。",
         "analysis_prompt": "分析以下 Linux Log。摘要最多 120 字，key_events、possible_causes、recommendations 各最多 5 項；只輸出 JSON，不要 Markdown 或其他文字。\n\nLOG:\n{log_text}",
@@ -43,6 +48,7 @@ def _llm_config(db: Session) -> dict:
         if not isinstance(stored, dict):
             raise LLMError("Stored LLM settings must be a JSON object")
         defaults.update(stored)
+    defaults["api_key"] = read_private().get("LLM_API_KEY") or ""
     return defaults
 
 
@@ -57,6 +63,8 @@ def _llm_client(db: Session) -> tuple[LLMClient, dict]:
         validated.analysis_prompt,
         validated.connection_test_prompt,
         validated.api_key or "",
+        provider=validated.provider,
+        timeout_seconds=validated.timeout_seconds,
     ), validated.model_dump()
 
 
@@ -83,6 +91,7 @@ def _create_summary(
     db.add(summary)
     db.commit()
     db.refresh(summary)
+    notify_summary(db, summary)
     return summary
 
 
@@ -315,7 +324,8 @@ def update_llm_settings(
     if row is None:
         row = AppSettings(key="llm")
         db.add(row)
-    row.value = json.dumps(values, ensure_ascii=False)
+    write_private({"LLM_API_KEY": values["api_key"]})
+    row.value = json.dumps({key: value for key, value in values.items() if key != "api_key"}, ensure_ascii=False)
     db.commit()
     return LLMSettingsRead(**{**values, "has_api_key": bool(values["api_key"])})
 
@@ -325,6 +335,41 @@ def test_llm_settings(db: Session = Depends(get_db)) -> dict[str, str]:
     try:
         _llm_client(db)[0].test_connection()
     except LLMError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"status": "ok"}
+
+
+@router.get("/settings/email")
+def get_email_settings(db: Session = Depends(get_db)):
+    return public_settings(load_settings(db))
+
+
+@router.put("/settings/email")
+def update_email_settings(payload: EmailSettings, db: Session = Depends(get_db)):
+    current = load_settings(db)
+    if payload.password is None:
+        payload.password = current.password
+    if payload.enabled:
+        try:
+            validate_ready(payload)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+    row = db.scalar(select(AppSettings).where(AppSettings.key == "email"))
+    if row is None:
+        row = AppSettings(key="email")
+        db.add(row)
+    write_private({"GMAIL_SENDER": payload.sender, "GMAIL_RECIPIENT": payload.recipient,
+                   "GMAIL_APP_PASSWORD": payload.password or ""})
+    row.value = payload.model_dump_json(exclude={"sender", "recipient", "password"})
+    db.commit()
+    return public_settings(payload)
+
+
+@router.post("/settings/email/test")
+def test_email_settings(db: Session = Depends(get_db)):
+    try:
+        send_email(load_settings(db), "[LogAnalyzer] 測試通知", "收到這封信代表 Gmail 通知設定成功。")
+    except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return {"status": "ok"}
 
